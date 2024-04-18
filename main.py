@@ -72,9 +72,11 @@ sigma0 = np.cov(procs, rowvar=False)
 # During Training with diffusers:
 # from tensorboardX import SummaryWriter
 # writer = SummaryWriter()
+# rng = jax.random.PRNGKey(123)
 # fid_bar = tqdm(desc="Computing FID stats...", total=fid_steps)
 # procs = []
 # for i in range(fid_steps): # fid_steps * 8 (num_devices) samples
+#     rng, key = jax.random.split(rng)
 #     keys = jax.random.split(key, num_samples)
 #     images = pipeline(prompt_ids, params, keys, num_inference_steps,height=H,width=H,jit=True).images # on-device (8,1,H,H,3) 
 #     proc = fid_fn_p(init_params_p, jax.lax.stop_gradient(2 * images - 1)) # Inception-Net States
