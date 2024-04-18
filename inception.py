@@ -10,6 +10,7 @@ import functools
 import scipy.linalg
 import pickle
 from . import utils
+import warnings
 
 PRNGKey = Any
 Array = Any
@@ -25,7 +26,7 @@ def fid_score(mu1, mu2, sigma1, sigma2, eps = 1e-6):
     if jnp.iscomplexobj(covmean):
         if not jnp.allclose(jnp.diagonal(covmean).imag, 0, atol=1e-3):
             m = jnp.max(jnp.abs(covmean.imag))
-            raise ValueError("Imaginary component {}".format(m))
+            warnings.warn("Imaginary component! max(im(sqrtm(sigma1@sigma))) = {}".format(m))
         covmean = covmean.real
     tr_covmean = jnp.trace(covmean)
     if not jnp.isfinite(covmean).all():
