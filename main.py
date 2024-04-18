@@ -10,10 +10,11 @@ from inception import fid_score, InceptionV3
 from tqdm.auto import tqdm
 import datasets
 from torchvision import transforms
+import os
 
 # Model
-model = inception.InceptionV3(pretrained=True)
-H, C = 256, 3
+model = InceptionV3(pretrained=True)
+H, C = 512, 3 # Training resolution
 fid_fn = functools.partial(model.apply, train=False)
 fid_fn_p = jax.pmap(fid_fn)
 key = jax.random.PRNGKey(104)
@@ -24,7 +25,7 @@ init_params_p = replicate(init_params)
 dataset = datasets.load_dataset("cifar10")
 train_transforms = transforms.Compose(
     [
-        transforms.Resize(256, interpolation=transforms.InterpolationMode.BILINEAR),
+        transforms.Resize(H, interpolation=transforms.InterpolationMode.BILINEAR),
         transforms.ToTensor(),
         transforms.Normalize([0.5], [0.5]),
     ]
@@ -48,13 +49,50 @@ fid_steps = 5000
 for i, x in tqdm(enumerate(fid_loader),desc="Calculating FID stats...",total=fid_steps):
     if i >= fid_steps:
         break
-    x = np.moveaxis(x,-3,-1) # (8,512,512,3) -1<=x<=1
+    x = np.moveaxis(x,-3,-1) # (8,H,H,3) -1<=x<=1
+    x = jax.image.resize(x,shape=(num_samples, 256, 256, C),method="bicubic")  # 256x256 as is in most FID implementations
     x = shard(x)
     proc = fid_fn_p(init_params_p, jax.lax.stop_gradient(x))
     procs.append(proc.squeeze(axis=1).squeeze(axis=1).squeeze(axis=1))
+
+# Checkpoint
+precomputed_fid_stats = False
+stats_path = os.path.join('.', 'fid_stats.npz')
+if os.path.isfile(stats_path) and precomputed_fid_stats:
+    stats = np.load(stats_path)
+    mu0, sigma0 = stats["mu"], stats["sigma"]
+    print('Loaded pre-computed statistics at:', stats_path)
+np.savez(stats_path, mu=mu0, sigma=sigma0)
+print('Saved pre-computed statistics at:', stats_path, '. Set --precomputed_fid_stats=True to skip it next time!')
+
 procs = jnp.concatenate(procs, axis=0)
 mu0 = np.mean(procs, axis=0)
 sigma0 = np.cov(procs, rowvar=False)
 
-# FID Score
-fid_score(mu0, mu0, sigma0, sigma0)
+# During Training with diffusers:
+# from tensorboardX import SummaryWriter
+# writer = SummaryWriter()
+# fid_bar = tqdm(desc="Computing FID stats...", total=fid_steps)
+# procs = []
+# for i in range(fid_steps): # fid_steps * 8 (num_devices) samples
+#     keys = jax.random.split(key, num_samples)
+#     images = pipeline(prompt_ids, params, keys, num_inference_steps,height=H,width=H,jit=True).images # on-device (8,1,H,H,3) 
+#     proc = fid_fn_p(init_params_p, jax.lax.stop_gradient(2 * images - 1)) # Inception-Net States
+#     procs.append(proc.squeeze(axis=1).squeeze(axis=1).squeeze(axis=1))
+#     fid_bar.update(1)
+
+# procs = jnp.concatenate(procs, axis=0)
+# mu = np.mean(procs, axis=0)
+# sigma = np.cov(procs, rowvar=False)
+
+# fid_score = inception.fid_score(mu0,mu,sigma0,sigma)
+
+# writer.add_scalar("FID/train", fid_score, global_step)
+# del procs, images
+# fid_bar.close()
+
+# Example FID Score
+mu = mu0 + .1 # try: + np.random.random(mu0.shape) *.01
+sigma = sigma0 * 1.1 # try: + np.random.random(sigma0.shape) *.01
+
+fid_score(mu0, mu, sigma0, sigma)
